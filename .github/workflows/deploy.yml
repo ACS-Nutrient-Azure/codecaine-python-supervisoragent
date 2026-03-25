@@ -1,0 +1,112 @@
+name: Deploy Supervisor Agent
+
+on:
+  push:
+    branches:
+      - deploy
+  workflow_dispatch:
+
+env:
+  AWS_REGION:     ap-northeast-2
+  ECR_REPOSITORY: cdci-prd-supervisor-agent
+
+jobs:
+  test:
+    name: Unit Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+
+  build-and-push:
+    name: Build & Push ECR
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      image_uri: ${{ steps.build.outputs.image_uri }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & Push
+        id: build
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          IMAGE_TAG=$(date +%s)
+          IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker buildx build \
+            --platform linux/arm64 \
+            --provenance=false \
+            --load \
+            -t $IMAGE_URI .
+
+          docker push $IMAGE_URI
+          echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+  deploy-agentcore:
+    name: Deploy AgentCore Runtime
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update AgentCore Runtime
+        env:
+          IMAGE_URI: ${{ needs.build-and-push.outputs.image_uri }}
+        run: |
+          NETWORK_CONFIG=$(aws bedrock-agentcore-control get-agent-runtime \
+            --agent-runtime-id ${{ secrets.AGENTCORE_RUNTIME_ID }} \
+            --region $AWS_REGION \
+            --query 'networkConfiguration' \
+            --output json)
+
+          aws bedrock-agentcore-control update-agent-runtime \
+            --agent-runtime-id ${{ secrets.AGENTCORE_RUNTIME_ID }} \
+            --agent-runtime-artifact "{\"containerConfiguration\": {\"containerUri\": \"$IMAGE_URI\"}}" \
+            --role-arn ${{ secrets.AGENTCORE_ROLE_ARN }} \
+            --network-configuration "$NETWORK_CONFIG" \
+            --environment-variables '{"LLM_PROVIDER":"bedrock"}' \
+            --region $AWS_REGION
+
+      - name: Wait for READY
+        run: |
+          for i in {1..60}; do
+            STATUS=$(aws bedrock-agentcore-control get-agent-runtime \
+              --agent-runtime-id ${{ secrets.AGENTCORE_RUNTIME_ID }} \
+              --region $AWS_REGION \
+              --query 'status' --output text)
+            [ "$STATUS" = "READY" ] && exit 0
+            [[ "$STATUS" == *FAILED* ]] && exit 1
+            sleep 10
+          done
+          exit 1
