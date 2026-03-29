@@ -233,11 +233,11 @@ class SupervisorAgent:
 
         payload = {
             "cognito_id": state["cognito_id"],
-            "chat_result_id": state["chat_result_id"],
+            "result_id": state["chat_result_id"],
             "chat_history": state["chat_history"],
             "current_conditions": current_conditions,
         }
-        url = settings.ANALYSIS_BACKEND_URL.rstrip("/") + "/api/analysis/calculate/chatbotagent"
+        url = settings.ANALYSIS_BACKEND_URL.rstrip("/") + "/api/analysis/chat-calculate"
         
         # 로컬 테스트: SigV4 서명 없이 호출
         if settings.USE_LOCAL_TEST:
