@@ -291,14 +291,15 @@ class SupervisorAgent:
         
         # 실제 배포: AgentCore
         loop = asyncio.get_event_loop()
-        client = self.session.client("bedrock-agentcore-runtime")
+        client = self.session.client("bedrock-agentcore")
 
         def _invoke():
             resp = client.invoke_agent_runtime(
                 agentRuntimeArn=agent_arn,
                 payload=json.dumps(payload, ensure_ascii=False),
             )
-            return json.loads(resp["output"])
+            raw = resp["response"].read()
+            return json.loads(raw)
 
         return await loop.run_in_executor(None, _invoke)
 
