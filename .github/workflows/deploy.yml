@@ -58,7 +58,7 @@ jobs:
           IMAGE_TAG=$(date +%s)
           IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker buildx build \
-            --platform linux/arm64 \
+            --platform linux/amd64 \
             --provenance=false \
             --load \
             -t $IMAGE_URI .
@@ -95,7 +95,6 @@ jobs:
             --agent-runtime-artifact "{\"containerConfiguration\": {\"containerUri\": \"$IMAGE_URI\"}}" \
             --role-arn ${{ secrets.AGENTCORE_ROLE_ARN }} \
             --network-configuration "$NETWORK_CONFIG" \
-            --environment-variables '{"LLM_PROVIDER":"bedrock"}' \
             --region $AWS_REGION
 
       - name: Wait for READY
