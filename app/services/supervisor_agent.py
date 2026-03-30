@@ -59,6 +59,16 @@ class SupervisorState(TypedDict):
 class SupervisorAgent:
     def __init__(self):
         # 로컬 테스트 모드: OpenAI 사용
+        self.llm = None
+        self.session = None
+        self.memory_client = None
+        # StateGraph 빌드 및 컴파일 (인스턴스 생성 시 1회)
+        self.graph = self._build_graph()
+
+    def _get_llm(self):
+        """LLM lazy 초기화 - 첫 요청 시점에 자격증명이 주입된 후 실행"""
+        if self.llm is not None:
+            return self.llm
         if settings.USE_LOCAL_TEST:
             from langchain_openai import ChatOpenAI
             self.llm = ChatOpenAI(
@@ -82,13 +92,10 @@ class SupervisorAgent:
             )
         
         # AgentCore Memory 초기화
-        self.memory_client = None
-        if settings.USE_MEMORY:
+        if settings.USE_MEMORY and self.memory_client is None:
             from bedrock_agentcore.memory import MemoryClient
             self.memory_client = MemoryClient(region_name=settings.AWS_REGION)
-        
-        # StateGraph 빌드 및 컴파일 (인스턴스 생성 시 1회)
-        self.graph = self._build_graph()
+        return self.llm
 
     def _build_graph(self) -> StateGraph:
         """
@@ -156,7 +163,7 @@ class SupervisorAgent:
             SystemMessage(content=ROUTE_SYSTEM_PROMPT),
             HumanMessage(content=state["chat_history"] + memory_context),
         ]
-        result = await self.llm.ainvoke(messages)
+        result = await self._get_llm().ainvoke(messages)
         route = result.content.strip().lower()
         if route not in ("analysis", "question", "both"):
             route = "question"  # 예상치 못한 응답 시 안전하게 question으로
@@ -226,7 +233,7 @@ class SupervisorAgent:
             )),
             HumanMessage(content=state["chat_history"]),
         ]
-        extract_result = await self.llm.ainvoke(extract_messages)
+        extract_result = await self._get_llm().ainvoke(extract_messages)
         current_conditions = extract_result.content.strip()
         if current_conditions == "없음":
             current_conditions = None
@@ -291,10 +298,14 @@ class SupervisorAgent:
         
         # 실제 배포: AgentCore
         loop = asyncio.get_event_loop()
-        client = self.session.client("bedrock-agentcore")
 
         def _invoke():
-            resp = client.invoke_agent_runtime(
+            c = boto3.client(
+                "bedrock-agentcore",
+                region_name=settings.AWS_REGION,
+                endpoint_url=f"https://bedrock-agentcore.{settings.AWS_REGION}.amazonaws.com",
+            )
+            resp = c.invoke_agent_runtime(
                 agentRuntimeArn=agent_arn,
                 payload=json.dumps(payload, ensure_ascii=False),
             )
