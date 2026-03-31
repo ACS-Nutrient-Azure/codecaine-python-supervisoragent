@@ -59,6 +59,16 @@ class SupervisorState(TypedDict):
 class SupervisorAgent:
     def __init__(self):
         # 로컬 테스트 모드: OpenAI 사용
+        self.llm = None
+        self.session = None
+        self.memory_client = None
+        # StateGraph 빌드 및 컴파일 (인스턴스 생성 시 1회)
+        self.graph = self._build_graph()
+
+    def _get_llm(self):
+        """LLM lazy 초기화 - 첫 요청 시점에 자격증명이 주입된 후 실행"""
+        if self.llm is not None:
+            return self.llm
         if settings.USE_LOCAL_TEST:
             from langchain_openai import ChatOpenAI
             self.llm = ChatOpenAI(
@@ -82,13 +92,9 @@ class SupervisorAgent:
             )
         
         # AgentCore Memory 초기화
-        self.memory_client = None
-        if settings.USE_MEMORY:
-            from bedrock_agentcore.memory import MemoryClient
-            self.memory_client = MemoryClient(region_name=settings.AWS_REGION)
-        
-        # StateGraph 빌드 및 컴파일 (인스턴스 생성 시 1회)
-        self.graph = self._build_graph()
+        if settings.USE_MEMORY and self.memory_client is None:
+            self.memory_client = boto3.client("bedrock-agentcore", region_name=settings.AWS_REGION)
+        return self.llm
 
     def _build_graph(self) -> StateGraph:
         """
@@ -140,12 +146,13 @@ class SupervisorAgent:
         memory_context = ""
         if self.memory_client and settings.MEMORY_ID:
             try:
-                conversations = self.memory_client.list_events(
-                    memory_id=settings.MEMORY_ID,
-                    actor_id=state["cognito_id"],
-                    session_id=str(state["chat_result_id"]),
-                    max_results=10
+                resp = self.memory_client.list_events(
+                    memoryId=settings.MEMORY_ID,
+                    actorId=state["cognito_id"],
+                    sessionId=str(state["chat_result_id"]),
+                    maxResults=10
                 )
+                conversations = resp.get("events", [])
                 if conversations:
                     memory_context = "\n\n[이전 대화 맥락]\n" + self._format_memory(conversations)
                     print(f"[SUPERVISOR] Loaded {len(conversations)} previous messages from memory")
@@ -156,7 +163,7 @@ class SupervisorAgent:
             SystemMessage(content=ROUTE_SYSTEM_PROMPT),
             HumanMessage(content=state["chat_history"] + memory_context),
         ]
-        result = await self.llm.ainvoke(messages)
+        result = await self._get_llm().ainvoke(messages)
         route = result.content.strip().lower()
         if route not in ("analysis", "question", "both"):
             route = "question"  # 예상치 못한 응답 시 안전하게 question으로
@@ -226,7 +233,7 @@ class SupervisorAgent:
             )),
             HumanMessage(content=state["chat_history"]),
         ]
-        extract_result = await self.llm.ainvoke(extract_messages)
+        extract_result = await self._get_llm().ainvoke(extract_messages)
         current_conditions = extract_result.content.strip()
         if current_conditions == "없음":
             current_conditions = None
@@ -239,21 +246,9 @@ class SupervisorAgent:
         }
         url = settings.ANALYSIS_BACKEND_URL.rstrip("/") + "/api/analysis/chat-calculate"
         
-        # 로컬 테스트: SigV4 서명 없이 호출
-        if settings.USE_LOCAL_TEST:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(url, json=payload, timeout=60.0)
-                resp.raise_for_status()
-                return resp.json()
-        
-        # 실제 배포: SigV4 서명 사용
-        auth = BotoAWSRequestsAuth(
-            aws_host=url.split("//")[-1].split("/")[0],
-            aws_region=settings.AWS_REGION,
-            aws_service="execute-api",
-        )
+        # Cloud Map DNS를 통한 VPC 내부 직접 호출 (인증 불필요)
         async with httpx.AsyncClient() as client:
-            resp = await client.post(url, json=payload, auth=auth, timeout=60.0)
+            resp = await client.post(url, json=payload, timeout=60.0)
             resp.raise_for_status()
             return resp.json()
 
@@ -291,10 +286,14 @@ class SupervisorAgent:
         
         # 실제 배포: AgentCore
         loop = asyncio.get_event_loop()
-        client = self.session.client("bedrock-agentcore")
 
         def _invoke():
-            resp = client.invoke_agent_runtime(
+            c = boto3.client(
+                "bedrock-agentcore",
+                region_name=settings.AWS_REGION,
+                endpoint_url=f"https://bedrock-agentcore.{settings.AWS_REGION}.amazonaws.com",
+            )
+            resp = c.invoke_agent_runtime(
                 agentRuntimeArn=agent_arn,
                 payload=json.dumps(payload, ensure_ascii=False),
             )
@@ -322,12 +321,12 @@ class SupervisorAgent:
         if self.memory_client and settings.MEMORY_ID:
             try:
                 self.memory_client.create_event(
-                    memory_id=settings.MEMORY_ID,
-                    actor_id=req.cognito_id,
-                    session_id=str(req.chat_result_id),
+                    memoryId=settings.MEMORY_ID,
+                    actorId=req.cognito_id,
+                    sessionId=str(req.chat_result_id),
                     messages=[
-                        (req.chat_history, "USER"),
-                        (result.get("final_response", ""), "ASSISTANT")
+                        {"role": "USER", "content": req.chat_history},
+                        {"role": "ASSISTANT", "content": result.get("final_response", "")}
                     ]
                 )
                 print(f"[SUPERVISOR] Saved conversation to memory")
@@ -344,9 +343,11 @@ class SupervisorAgent:
         lines = []
         for conv in conversations:
             messages = conv.get("messages", [])
-            for msg, role in messages:
+            for msg in messages:
+                role = msg.get("role", "")
+                content = msg.get("content", "")
                 if role == "USER":
-                    lines.append(f"사용자: {msg}")
+                    lines.append(f"사용자: {content}")
                 elif role == "ASSISTANT":
-                    lines.append(f"AI: {msg}")
+                    lines.append(f"AI: {content}")
         return "\n".join(lines[-20:])  # 최근 20개만

@@ -90,12 +90,19 @@ jobs:
             --query 'networkConfiguration' \
             --output json)
 
+          # 기존 환경변수 조회 후 image URI만 교체 (환경변수 유지)
+          CURRENT_ENV=$(aws bedrock-agentcore-control get-agent-runtime \
+            --agent-runtime-id ${{ secrets.AGENTCORE_RUNTIME_ID }} \
+            --region $AWS_REGION \
+            --query 'environmentVariables' \
+            --output json)
+
           aws bedrock-agentcore-control update-agent-runtime \
             --agent-runtime-id ${{ secrets.AGENTCORE_RUNTIME_ID }} \
             --agent-runtime-artifact "{\"containerConfiguration\": {\"containerUri\": \"$IMAGE_URI\"}}" \
             --role-arn ${{ secrets.AGENTCORE_ROLE_ARN }} \
             --network-configuration "$NETWORK_CONFIG" \
-            --environment-variables '{"LLM_PROVIDER":"bedrock"}' \
+            --environment-variables "$CURRENT_ENV" \
             --region $AWS_REGION
 
       - name: Wait for READY

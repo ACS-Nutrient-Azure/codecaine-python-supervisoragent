@@ -8,7 +8,8 @@ class Settings(BaseSettings):
     ANALYSIS_BACKEND_URL: str = ""
     QUESTION_AGENT_ARN: str = ""
     SUMMARY_AGENT_ARN: str = ""
-    
+    LLM_PROVIDER: str = "bedrock"
+
     # 로컬 테스트용
     USE_LOCAL_TEST: bool = False
     # GEMINI_API_KEY: str = ""
