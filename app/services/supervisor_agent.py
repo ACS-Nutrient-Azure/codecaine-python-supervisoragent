@@ -93,8 +93,7 @@ class SupervisorAgent:
         
         # AgentCore Memory 초기화
         if settings.USE_MEMORY and self.memory_client is None:
-            from bedrock_agentcore.memory import MemoryClient
-            self.memory_client = MemoryClient(region_name=settings.AWS_REGION)
+            self.memory_client = boto3.client("bedrock-agentcore", region_name=settings.AWS_REGION)
         return self.llm
 
     def _build_graph(self) -> StateGraph:
@@ -147,12 +146,13 @@ class SupervisorAgent:
         memory_context = ""
         if self.memory_client and settings.MEMORY_ID:
             try:
-                conversations = self.memory_client.list_events(
-                    memory_id=settings.MEMORY_ID,
-                    actor_id=state["cognito_id"],
-                    session_id=str(state["chat_result_id"]),
-                    max_results=10
+                resp = self.memory_client.list_events(
+                    memoryId=settings.MEMORY_ID,
+                    actorId=state["cognito_id"],
+                    sessionId=str(state["chat_result_id"]),
+                    maxResults=10
                 )
+                conversations = resp.get("events", [])
                 if conversations:
                     memory_context = "\n\n[이전 대화 맥락]\n" + self._format_memory(conversations)
                     print(f"[SUPERVISOR] Loaded {len(conversations)} previous messages from memory")
@@ -333,12 +333,12 @@ class SupervisorAgent:
         if self.memory_client and settings.MEMORY_ID:
             try:
                 self.memory_client.create_event(
-                    memory_id=settings.MEMORY_ID,
-                    actor_id=req.cognito_id,
-                    session_id=str(req.chat_result_id),
+                    memoryId=settings.MEMORY_ID,
+                    actorId=req.cognito_id,
+                    sessionId=str(req.chat_result_id),
                     messages=[
-                        (req.chat_history, "USER"),
-                        (result.get("final_response", ""), "ASSISTANT")
+                        {"role": "USER", "content": req.chat_history},
+                        {"role": "ASSISTANT", "content": result.get("final_response", "")}
                     ]
                 )
                 print(f"[SUPERVISOR] Saved conversation to memory")
@@ -355,9 +355,11 @@ class SupervisorAgent:
         lines = []
         for conv in conversations:
             messages = conv.get("messages", [])
-            for msg, role in messages:
+            for msg in messages:
+                role = msg.get("role", "")
+                content = msg.get("content", "")
                 if role == "USER":
-                    lines.append(f"사용자: {msg}")
+                    lines.append(f"사용자: {content}")
                 elif role == "ASSISTANT":
-                    lines.append(f"AI: {msg}")
+                    lines.append(f"AI: {content}")
         return "\n".join(lines[-20:])  # 최근 20개만
