@@ -290,7 +290,7 @@ class SupervisorAgent:
         def _invoke():
             from botocore.config import Config
             c = boto3.client(
-                "bedrock-agentcore-runtime",
+                "bedrock-agentcore",
                 region_name=settings.AWS_REGION,
                 config=Config(read_timeout=300, connect_timeout=10),
             )
