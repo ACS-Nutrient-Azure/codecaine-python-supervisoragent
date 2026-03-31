@@ -300,10 +300,11 @@ class SupervisorAgent:
         loop = asyncio.get_event_loop()
 
         def _invoke():
+            from botocore.config import Config
             c = boto3.client(
                 "bedrock-agentcore",
                 region_name=settings.AWS_REGION,
-                endpoint_url=f"https://bedrock-agentcore.{settings.AWS_REGION}.amazonaws.com",
+                config=Config(read_timeout=300, connect_timeout=10),
             )
             resp = c.invoke_agent_runtime(
                 agentRuntimeArn=agent_arn,
