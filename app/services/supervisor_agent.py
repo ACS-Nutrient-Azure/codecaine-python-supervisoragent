@@ -246,21 +246,9 @@ class SupervisorAgent:
         }
         url = settings.ANALYSIS_BACKEND_URL.rstrip("/") + "/api/analysis/chat-calculate"
         
-        # 로컬 테스트: SigV4 서명 없이 호출
-        if settings.USE_LOCAL_TEST:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(url, json=payload, timeout=60.0)
-                resp.raise_for_status()
-                return resp.json()
-        
-        # 실제 배포: SigV4 서명 사용
-        auth = BotoAWSRequestsAuth(
-            aws_host=url.split("//")[-1].split("/")[0],
-            aws_region=settings.AWS_REGION,
-            aws_service="execute-api",
-        )
+        # Cloud Map DNS를 통한 VPC 내부 직접 호출 (인증 불필요)
         async with httpx.AsyncClient() as client:
-            resp = await client.post(url, json=payload, auth=auth, timeout=60.0)
+            resp = await client.post(url, json=payload, timeout=60.0)
             resp.raise_for_status()
             return resp.json()
 
