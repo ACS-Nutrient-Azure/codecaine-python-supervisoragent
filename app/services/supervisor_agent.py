@@ -256,7 +256,7 @@ class SupervisorAgent:
         payload = {
             "cognito_id": state["cognito_id"],
             "result_id": state["chat_result_id"],
-            "chat_history": state["chat_history"],
+            "chat_history": json.dumps([{"role": "user", "content": state["chat_history"]}], ensure_ascii=False),
             "current_conditions": current_conditions,
         }
         url = settings.ANALYSIS_BACKEND_URL.rstrip("/") + "/api/analysis/chat-calculate"
