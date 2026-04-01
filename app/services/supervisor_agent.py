@@ -138,11 +138,25 @@ class SupervisorAgent:
 
     # ── 노드 구현 ─────────────────────────────────────────────────
 
+    @staticmethod
+    def _keyword_route(text: str) -> str | None:
+        """명확한 재분석/분석 요청 키워드는 LLM 없이 바로 판단."""
+        analysis_keywords = ["재분석", "다시 분석", "분석해줘", "분석 해줘", "목적이 바뀌", "목적을 바꿔", "목적 바꿔", "추천 목적"]
+        if any(kw in text for kw in analysis_keywords):
+            return "analysis"
+        return None
+
     async def _node_route(self, state: SupervisorState) -> dict:
         """
         LLM이 chat_history 전체 문맥을 보고 라우팅 결정.
         LLM 응답이 예상 값이 아닌 경우 "question"으로 fallback.
         """
+        # 키워드 기반 사전 판단 (LLM 호출 전)
+        keyword_result = self._keyword_route(state["chat_history"])
+        if keyword_result:
+            logger.info(f"[{state['cognito_id']}] route → {keyword_result} (keyword match)")
+            return {"route": keyword_result}
+
         # AgentCore Memory에서 이전 대화 불러오기
         memory_context = ""
         if self.memory_client and settings.MEMORY_ID:
