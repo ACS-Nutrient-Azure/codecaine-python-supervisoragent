@@ -295,12 +295,16 @@ class SupervisorAgent:
                 region_name=settings.AWS_REGION,
                 config=Config(read_timeout=300, connect_timeout=10),
             )
-            resp = c.invoke_agent_runtime(
-                agentRuntimeArn=agent_arn,
-                payload=json.dumps(payload, ensure_ascii=False),
-            )
-            raw = resp["response"].read()
-            return json.loads(raw)
+            try:
+                resp = c.invoke_agent_runtime(
+                    agentRuntimeArn=agent_arn,
+                    payload=json.dumps(payload, ensure_ascii=False),
+                )
+                raw = resp["response"].read()
+                return json.loads(raw)
+            except Exception as e:
+                logger.error(f"[INVOKE_AGENT] arn={agent_arn[:40]} error={type(e).__name__}: {e}")
+                raise
 
         return await loop.run_in_executor(None, _invoke)
 
