@@ -95,7 +95,7 @@ Chatbot Backend
 - 영양소 분석 결과 반환
 
 **call_question**:
-- Question Agent ARN 호출 (boto3 bedrock-agentcore-runtime)
+- Question Agent ARN 호출 (boto3 bedrock-agentcore)
 - 일반 질문 답변 반환
 
 **call_both**:
