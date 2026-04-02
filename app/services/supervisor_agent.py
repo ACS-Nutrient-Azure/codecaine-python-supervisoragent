@@ -274,7 +274,7 @@ class SupervisorAgent:
         
         # Cloud Map DNS를 통한 VPC 내부 직접 호출 (인증 불필요)
         async with httpx.AsyncClient() as client:
-            resp = await client.post(url, json=payload, timeout=60.0)
+            resp = await client.post(url, json=payload, timeout=180.0)
             resp.raise_for_status()
             return resp.json()
 
