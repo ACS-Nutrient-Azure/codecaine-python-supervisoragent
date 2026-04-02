@@ -1,4 +1,5 @@
 import logging
+import time
 
 from fastapi import FastAPI
 from app.api.routes import invocations
@@ -14,4 +15,4 @@ app.include_router(invocations.router)
 
 @app.get("/ping")
 async def ping():
-    return {"status": "ok"}
+    return {"status": "Healthy", "time_of_last_update": int(time.time())}

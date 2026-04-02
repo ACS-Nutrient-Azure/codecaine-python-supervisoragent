@@ -188,8 +188,13 @@ class SupervisorAgent:
 
     async def _node_call_analysis(self, state: SupervisorState) -> dict:
         """Analysis Backend API만 호출."""
-        result = await self._call_analysis(state)
-        return {"analysis_result": result}
+        try:
+            result = await self._call_analysis(state)
+            logger.info(f"[{state['cognito_id']}] analysis result keys: {list(result.keys()) if isinstance(result, dict) else type(result)}")
+            return {"analysis_result": result}
+        except Exception as e:
+            logger.error(f"[{state['cognito_id']}] _call_analysis failed: {type(e).__name__}: {e}")
+            raise
 
     async def _node_call_question(self, state: SupervisorState) -> dict:
         """Question Agent만 호출. 결과를 final_response에 바로 세팅."""
@@ -220,8 +225,14 @@ class SupervisorAgent:
     async def _node_summarize(self, state: SupervisorState) -> dict:
         """Summary Agent를 호출해 최종 응답 생성."""
         print(f"\n[SUPERVISOR] Calling Summary Agent...")
-        print(f"  - analysis_result: {state.get('analysis_result')}")
+        print(f"  - analysis_result keys: {list(state.get('analysis_result', {}).keys()) if state.get('analysis_result') else None}")
         print(f"  - question_result: {state.get('question_result')}")
+
+        # analysis_result가 None이면 summarize 의미 없음 — 에러 응답
+        if not state.get("analysis_result") and not state.get("question_result"):
+            logger.error(f"[{state['cognito_id']}] summarize called with no results")
+            return {"final_response": "분석 결과를 가져오지 못했습니다. 잠시 후 다시 시도해주세요."}
+
         payload = {
             "cognito_id": state["cognito_id"],
             "analysis_result": state.get("analysis_result"),
