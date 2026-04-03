@@ -1,3 +1,4 @@
+import json
 import logging
 import boto3
 from aws_xray_sdk.core import xray_recorder, patch_all
@@ -52,8 +53,18 @@ class XRayMiddleware(BaseHTTPMiddleware):
     X-Amzn-Trace-Id 헤더가 있으면 상위 trace와 연결."""
 
     async def dispatch(self, request: Request, call_next):
-        logger.info("[XRAY] middleware hit: %s %s", request.method, request.url.path)
+        # 1) HTTP 헤더에서 trace context 시도
         trace_header = request.headers.get("X-Amzn-Trace-Id", "")
+
+        # 2) AgentCore는 헤더를 포워딩 안 하므로 request body의 _xray_trace 필드에서 읽기
+        if not trace_header and request.method == "POST":
+            try:
+                body_bytes = await request.body()  # Starlette가 캐싱 → 핸들러도 재사용 가능
+                body_data = json.loads(body_bytes)
+                trace_header = body_data.get("_xray_trace", "")
+            except Exception:
+                pass
+
         parsed = _parse_trace_header(trace_header) if trace_header else {}
 
         segment_name = xray_recorder._service or request.url.path
@@ -68,10 +79,6 @@ class XRayMiddleware(BaseHTTPMiddleware):
                 "method": request.method,
                 "url": str(request.url),
             })
-            # 헤더 확인용 - X-Ray 콘솔 Annotations에서 볼 수 있음
-            for k, v in request.headers.items():
-                if "trace" in k.lower() or "amzn" in k.lower() or "parent" in k.lower():
-                    segment.put_annotation(k.replace("-", "_"), v[:200])
             response = await call_next(request)
             segment.put_http_meta("response", {"status": response.status_code})
             return response
