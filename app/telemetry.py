@@ -1,12 +1,14 @@
 import json
 import logging
 import boto3
-from aws_xray_sdk.core import xray_recorder
+from aws_xray_sdk.core import xray_recorder, patch_all
 from aws_xray_sdk.core.emitters.udp_emitter import UDPEmitter
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
 logger = logging.getLogger(__name__)
+
+_XRAY_LIMIT = 50_000  # X-Ray put_trace_segments API 64KB 제한 → 여유 두고 50KB
 
 
 class _BotoXRayEmitter(UDPEmitter):
@@ -23,10 +25,15 @@ class _BotoXRayEmitter(UDPEmitter):
 
     def send_entity(self, entity) -> None:
         try:
+            doc = entity.serialize()
+            if len(doc) > _XRAY_LIMIT:
+                # subsegment 제거 후 재시도 (루트 segment는 항상 전송)
+                data = json.loads(doc)
+                data.pop("subsegments", None)
+                doc = json.dumps(data)
             self._get_client().put_trace_segments(
-                TraceSegmentDocuments=[entity.serialize()]
+                TraceSegmentDocuments=[doc]
             )
-            logger.info("X-Ray segment sent: %s", entity.id)
         except Exception as exc:
             logger.warning("X-Ray put_trace_segments failed: %s", exc)
 
@@ -50,16 +57,20 @@ def _parse_trace_header(header: str) -> dict:
 
 class XRayMiddleware(BaseHTTPMiddleware):
     """인바운드 HTTP 요청마다 X-Ray segment 생성/종료.
-    X-Amzn-Trace-Id 헤더가 있으면 상위 trace와 연결."""
+    X-Amzn-Trace-Id 헤더 또는 body의 _xray_trace 필드로 상위 trace와 연결."""
 
     async def dispatch(self, request: Request, call_next):
+        # /ping 헬스체크는 트레이싱 제외 (Service Map 노이즈 방지)
+        if request.url.path in ("/ping", "/health"):
+            return await call_next(request)
+
         # 1) HTTP 헤더에서 trace context 시도
         trace_header = request.headers.get("X-Amzn-Trace-Id", "")
 
-        # 2) AgentCore는 헤더를 포워딩 안 하므로 request body의 _xray_trace 필드에서 읽기
+        # 2) AgentCore는 헤더를 포워딩 안 하므로 body의 _xray_trace 필드에서 읽기
         if not trace_header and request.method == "POST":
             try:
-                body_bytes = await request.body()  # Starlette가 캐싱 → 핸들러도 재사용 가능
+                body_bytes = await request.body()  # Starlette 캐싱 → 핸들러도 재사용 가능
                 body_data = json.loads(body_bytes)
                 trace_header = body_data.get("_xray_trace", "")
             except Exception:
@@ -79,8 +90,6 @@ class XRayMiddleware(BaseHTTPMiddleware):
                 "method": request.method,
                 "url": str(request.url),
             })
-            segment.put_annotation("debug_trace_header", trace_header[:100] if trace_header else "EMPTY")
-            segment.put_annotation("debug_parent_id", parsed.get("parent_id", "NONE"))
             response = await call_next(request)
             segment.put_http_meta("response", {"status": response.status_code})
             return response
@@ -88,8 +97,7 @@ class XRayMiddleware(BaseHTTPMiddleware):
             segment.add_exception(e, fatal=True)
             raise
         finally:
-            # thread-local 대신 로컬 segment 직접 닫고 전송
-            # (concurrent 요청이 thread-local을 덮어써도 안전)
+            # thread-local 대신 로컬 segment 직접 닫고 전송 (concurrent /ping 충돌 방지)
             segment.close()
             xray_recorder._emitter.send_entity(segment)
 
@@ -100,5 +108,4 @@ def setup_xray(service_name: str, region: str = "ap-northeast-2") -> None:
         context_missing="LOG_ERROR",
         emitter=_BotoXRayEmitter(region),
     )
-    # patch_all() 제거: 내부 boto3 subsegment가 너무 많아 64KB 초과 → X-Ray 전송 실패
-    # 최상위 segment만 전송해서 Service Map 연결선이 안정적으로 동작하게 함
+    patch_all()
