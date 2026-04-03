@@ -79,6 +79,8 @@ class XRayMiddleware(BaseHTTPMiddleware):
                 "method": request.method,
                 "url": str(request.url),
             })
+            segment.put_annotation("debug_trace_header", trace_header[:100] if trace_header else "EMPTY")
+            segment.put_annotation("debug_parent_id", parsed.get("parent_id", "NONE"))
             response = await call_next(request)
             segment.put_http_meta("response", {"status": response.status_code})
             return response
