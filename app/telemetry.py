@@ -1,7 +1,9 @@
 import logging
 import boto3
-from aws_xray_sdk.core import xray_recorder
+from aws_xray_sdk.core import xray_recorder, patch_all
 from aws_xray_sdk.core.emitters.udp_emitter import UDPEmitter
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +32,30 @@ class _BotoXRayEmitter(UDPEmitter):
         pass  # daemon 없음, API 직접 호출
 
 
+class XRayMiddleware(BaseHTTPMiddleware):
+    """인바운드 HTTP 요청마다 X-Ray segment 생성/종료."""
+
+    async def dispatch(self, request: Request, call_next):
+        segment = xray_recorder.begin_segment(request.url.path)
+        try:
+            segment.put_http_meta("request", {
+                "method": request.method,
+                "url": str(request.url),
+            })
+            response = await call_next(request)
+            segment.put_http_meta("response", {"status": response.status_code})
+            return response
+        except Exception as e:
+            segment.add_exception(e, fatal=True)
+            raise
+        finally:
+            xray_recorder.end_segment()
+
+
 def setup_xray(service_name: str, region: str = "ap-northeast-2") -> None:
     xray_recorder.configure(
         service=service_name,
         context_missing="LOG_ERROR",
         emitter=_BotoXRayEmitter(region),
     )
-
+    patch_all()

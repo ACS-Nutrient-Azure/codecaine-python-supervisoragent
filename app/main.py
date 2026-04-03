@@ -2,10 +2,8 @@ import logging
 import time
 
 from fastapi import FastAPI
-from aws_xray_sdk.core import xray_recorder
-from aws_xray_sdk.ext.fastapi.middleware import XRayMiddleware
 from app.api.routes import invocations
-from app.telemetry import setup_xray
+from app.telemetry import setup_xray, XRayMiddleware
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,7 +16,7 @@ except Exception as e:
     logging.getLogger(__name__).warning("X-Ray setup failed (non-fatal): %s", e)
 
 app = FastAPI(title="Supervisor Agent", version="1.0.0")
-app.add_middleware(XRayMiddleware, recorder=xray_recorder)
+app.add_middleware(XRayMiddleware)
 app.include_router(invocations.router)
 
 
