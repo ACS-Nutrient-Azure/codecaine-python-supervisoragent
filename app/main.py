@@ -12,7 +12,10 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
-setup_xray("cdci-prd-supervisor-agent")
+try:
+    setup_xray("cdci-prd-supervisor-agent")
+except Exception as e:
+    logging.getLogger(__name__).warning("X-Ray setup failed (non-fatal): %s", e)
 
 app = FastAPI(title="Supervisor Agent", version="1.0.0")
 app.add_middleware(XRayMiddleware, recorder=xray_recorder)

@@ -1,6 +1,6 @@
 import logging
 import boto3
-from aws_xray_sdk.core import xray_recorder, patch_all
+from aws_xray_sdk.core import xray_recorder
 from aws_xray_sdk.core.emitters.udp_emitter import UDPEmitter
 
 logger = logging.getLogger(__name__)
@@ -36,4 +36,4 @@ def setup_xray(service_name: str, region: str = "ap-northeast-2") -> None:
         context_missing="LOG_ERROR",
         emitter=_BotoXRayEmitter(region),
     )
-    patch_all()
+
