@@ -32,11 +32,34 @@ class _BotoXRayEmitter(UDPEmitter):
         pass  # daemon 없음, API 직접 호출
 
 
+def _parse_trace_header(header: str) -> dict:
+    """X-Amzn-Trace-Id 헤더 파싱 → {trace_id, parent_id, sampling}"""
+    result = {}
+    for part in header.split(";"):
+        part = part.strip()
+        if part.startswith("Root="):
+            result["trace_id"] = part[5:]
+        elif part.startswith("Parent="):
+            result["parent_id"] = part[7:]
+        elif part.startswith("Sampled="):
+            result["sampling"] = part[8:]
+    return result
+
+
 class XRayMiddleware(BaseHTTPMiddleware):
-    """인바운드 HTTP 요청마다 X-Ray segment 생성/종료."""
+    """인바운드 HTTP 요청마다 X-Ray segment 생성/종료.
+    X-Amzn-Trace-Id 헤더가 있으면 상위 trace와 연결."""
 
     async def dispatch(self, request: Request, call_next):
-        segment = xray_recorder.begin_segment(request.url.path)
+        trace_header = request.headers.get("X-Amzn-Trace-Id", "")
+        parsed = _parse_trace_header(trace_header) if trace_header else {}
+
+        segment = xray_recorder.begin_segment(
+            request.url.path,
+            traceid=parsed.get("trace_id"),
+            parent_id=parsed.get("parent_id"),
+            sampling=int(parsed["sampling"]) if parsed.get("sampling") else None,
+        )
         try:
             segment.put_http_meta("request", {
                 "method": request.method,
