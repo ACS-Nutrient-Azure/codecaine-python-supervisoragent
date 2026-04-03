@@ -1,7 +1,7 @@
 import json
 import logging
 import boto3
-from aws_xray_sdk.core import xray_recorder, patch_all
+from aws_xray_sdk.core import xray_recorder
 from aws_xray_sdk.core.emitters.udp_emitter import UDPEmitter
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -100,4 +100,5 @@ def setup_xray(service_name: str, region: str = "ap-northeast-2") -> None:
         context_missing="LOG_ERROR",
         emitter=_BotoXRayEmitter(region),
     )
-    patch_all()
+    # patch_all() 제거: 내부 boto3 subsegment가 너무 많아 64KB 초과 → X-Ray 전송 실패
+    # 최상위 segment만 전송해서 Service Map 연결선이 안정적으로 동작하게 함
