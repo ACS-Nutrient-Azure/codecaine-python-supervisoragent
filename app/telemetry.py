@@ -75,7 +75,10 @@ class XRayMiddleware(BaseHTTPMiddleware):
             segment.add_exception(e, fatal=True)
             raise
         finally:
-            xray_recorder.end_segment()
+            # thread-local 대신 로컬 segment 직접 닫고 전송
+            # (concurrent 요청이 thread-local을 덮어써도 안전)
+            segment.close()
+            xray_recorder._emitter.send_entity(segment)
 
 
 def setup_xray(service_name: str, region: str = "ap-northeast-2") -> None:
