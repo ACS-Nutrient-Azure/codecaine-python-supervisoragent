@@ -25,8 +25,9 @@ class _BotoXRayEmitter(UDPEmitter):
             self._get_client().put_trace_segments(
                 TraceSegmentDocuments=[entity.serialize()]
             )
+            logger.info("X-Ray segment sent: %s", entity.id)
         except Exception as exc:
-            logger.debug("X-Ray put_trace_segments failed: %s", exc)
+            logger.warning("X-Ray put_trace_segments failed: %s", exc)
 
     def set_daemon_address(self, address):
         pass  # daemon 없음, API 직접 호출
@@ -59,7 +60,7 @@ class XRayMiddleware(BaseHTTPMiddleware):
             segment_name,
             traceid=parsed.get("trace_id"),
             parent_id=parsed.get("parent_id"),
-            sampling=int(parsed["sampling"]) if parsed.get("sampling") else None,
+            sampling=int(parsed["sampling"]) if parsed.get("sampling") else 1,
         )
         try:
             segment.put_http_meta("request", {
