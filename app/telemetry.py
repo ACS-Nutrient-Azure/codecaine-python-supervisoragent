@@ -52,7 +52,7 @@ class XRayMiddleware(BaseHTTPMiddleware):
     X-Amzn-Trace-Id 헤더가 있으면 상위 trace와 연결."""
 
     async def dispatch(self, request: Request, call_next):
-        logger.info("[XRAY] middleware hit: %s %s", request.method, request.url.path)
+        logger.info("[XRAY] middleware hit: %s %s | headers: %s", request.method, request.url.path, dict(request.headers))
         trace_header = request.headers.get("X-Amzn-Trace-Id", "")
         parsed = _parse_trace_header(trace_header) if trace_header else {}
 
