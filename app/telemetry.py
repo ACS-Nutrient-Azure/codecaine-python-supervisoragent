@@ -54,8 +54,9 @@ class XRayMiddleware(BaseHTTPMiddleware):
         trace_header = request.headers.get("X-Amzn-Trace-Id", "")
         parsed = _parse_trace_header(trace_header) if trace_header else {}
 
+        segment_name = xray_recorder._service or request.url.path
         segment = xray_recorder.begin_segment(
-            request.url.path,
+            segment_name,
             traceid=parsed.get("trace_id"),
             parent_id=parsed.get("parent_id"),
             sampling=int(parsed["sampling"]) if parsed.get("sampling") else None,
