@@ -18,8 +18,6 @@ LangGraph StateGraph 기반 Supervisor Agent 핵심 로직.
 import asyncio
 import json
 import logging
-import time
-import uuid
 from typing import TypedDict
 
 import boto3
@@ -33,43 +31,6 @@ from app.core.config import settings
 from app.schemas.agent import SupervisorRequest, SupervisorResponse
 
 logger = logging.getLogger(__name__)
-
-
-def _arn_to_agent_name(agent_arn: str) -> str:
-    """ARN → 에이전트 이름 매핑."""
-    if agent_arn == settings.QUESTION_AGENT_ARN:
-        return "cdci-prd-question-agent"
-    if agent_arn == settings.SUMMARY_AGENT_ARN:
-        return "cdci-prd-summary-agent"
-    return "cdci-prd-agent"
-
-
-def _send_xray_agent_call(start_time: float, end_time: float, agent_name: str, success: bool) -> None:
-    """supervisor → sub-agent 호출을 X-Ray에 기록 (boto3 직접 전송)."""
-    try:
-        trace_id = f"1-{int(start_time):08x}-{uuid.uuid4().hex[:24]}"
-        segment = {
-            "id": uuid.uuid4().hex[:16],
-            "name": "cdci-prd-supervisor-agent",
-            "trace_id": trace_id,
-            "start_time": start_time,
-            "end_time": end_time,
-            "fault": not success,
-            "origin": "AWS::ECS::Fargate",
-            "subsegments": [{
-                "id": uuid.uuid4().hex[:16],
-                "name": agent_name,
-                "start_time": start_time,
-                "end_time": end_time,
-                "namespace": "remote",
-                "fault": not success,
-            }],
-        }
-        boto3.client("xray", region_name=settings.AWS_REGION).put_trace_segments(
-            TraceSegmentDocuments=[json.dumps(segment)]
-        )
-    except Exception as exc:
-        logger.warning("X-Ray agent call segment send failed: %s", exc)
 
 
 # LLM에게 라우팅 판단 기준을 안내하는 시스템 프롬프트
@@ -351,8 +312,6 @@ class SupervisorAgent:
 
         # 실제 배포: AgentCore
         loop = asyncio.get_event_loop()
-        call_start = time.time()
-        success = False
 
         def _invoke():
             from botocore.config import Config
@@ -372,16 +331,7 @@ class SupervisorAgent:
                 logger.error(f"[INVOKE_AGENT] arn={agent_arn[:40]} error={type(e).__name__}: {e}")
                 raise
 
-        try:
-            result = await loop.run_in_executor(None, _invoke)
-            success = True
-            return result
-        except Exception:
-            raise
-        finally:
-            call_end = time.time()
-            agent_name = _arn_to_agent_name(agent_arn)
-            _send_xray_agent_call(call_start, call_end, agent_name, success)
+        return await loop.run_in_executor(None, _invoke)
 
     async def run(self, req: SupervisorRequest) -> SupervisorResponse:
         """StateGraph 실행 진입점. 초기 State를 구성하고 graph.ainvoke 호출."""
